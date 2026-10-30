@@ -1,0 +1,54 @@
+// File: prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// 1. Physical Locker State
+model Locker {
+  id           String  @id @default(auto()) @map("_id") @db.ObjectId
+  lockerNumber Int     @unique
+  isOccupied   Boolean @default(false)
+  currentUid   String?
+}
+
+// 2. NFC Card User Profile
+model User {
+  id             String @id @default(auto()) @map("_id") @db.ObjectId
+  uid            String @unique
+  totalSessions  Int    @default(0)
+  totalUsageTime Int    @default(0)
+}
+
+// 3. Check-In / Check-Out & Admin Override Logs
+model Session {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  uid           String
+  lockerNumber  Int
+  checkInTime   DateTime  @default(now())
+  checkOutTime  DateTime?
+  duration      Int?
+  forcedByAdmin String?
+  seq           Int?
+}
+
+// 4. Xero Key Admin Accounts
+model AdminUser {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+// 5. Real-Time ESP32 Hardware Heartbeat Status (Single-Row Model)
+model SystemStatus {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  key           String   @unique @default("GLOBAL")
+  lastHeartbeat DateTime @default(now())
+  lastSyncedSeq Int      @default(0)
+}
