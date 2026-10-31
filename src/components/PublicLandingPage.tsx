@@ -567,7 +567,7 @@ export function PublicLandingPage({
                 isHardwareOnline ? "text-emerald-400" : "text-rose-500"
               }
             >
-              {isHardwareOnline ? "SYSTEM ONLINE &amp; SYNCED" : "SYSTEM CURRENTLY OFFLINE"}
+              {isHardwareOnline ? "SYSTEM ONLINE" : "SYSTEM OFFLINE"}
             </p>
           </div>
         </div>
