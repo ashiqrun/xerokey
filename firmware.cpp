@@ -12,9 +12,7 @@
 #include <sys/time.h>
 #include <esp_task_wdt.h> // Watchdog Timer Library
 
-// ============================================================================
 // 1. NETWORK & API CONFIGURATION
-// ============================================================================
 
 #define USE_LOCAL_SERVER
 
@@ -23,7 +21,7 @@
   #define API_HOST "http://192.168.0.106:3000"
 #else
   // Production Cloud URL
-  #define API_HOST "https://xero-key.vercel.app"
+  #define API_HOST "https://xerokey.run"
 #endif
 
 #define API_MAIN_ENDPOINT API_HOST "/api/esp32"
@@ -33,12 +31,10 @@
 struct WifiCred { const char* ssid; const char* pass; };
 const WifiCred WIFI_NETWORKS[] = {
   {"X",   "Run.5080"},
-  {"BACKUP_WIFI_SSID", "BACKUP_WIFI_PASS"}
+  {"ashiqrun", "Run.5080"}
 };
 
-// ============================================================================
 // 2. HARDWARE PINS & CONSTANTS
-// ============================================================================
 
 #define PIN_RFID_SS    5   // D5
 #define PIN_RFID_RST   4   // D4
@@ -59,10 +55,9 @@ const WifiCred WIFI_NETWORKS[] = {
 
 #define WDT_TIMEOUT    15 // 15 Seconds Hardware Watchdog Timeout
 
-// ============================================================================
 // 3. 13 FIXED MASTER KEYS CONFIGURATION
-// ============================================================================
-const char* const MASTER_UID_ALL = "04:FF:FF:FF:FF:FF:00";
+
+const char* const MASTER_UID_ALL = "A1:B9:80:66";
 
 const char* const MASTER_UID_LOCKERS[NUM_LOCKERS] = {
   "04:01:00:00:00:00:01", "04:02:00:00:00:00:02", "04:03:00:00:00:00:03",
@@ -100,9 +95,7 @@ uint8_t  buzzEdgesLeft = 0;
 bool     buzzSyncRedLed = false;
 uint32_t lastScanTime = 0;
 
-// ============================================================================
 // 4. CORE 1 HELPERS (Zero Blocking, Local NVS & Hardware Control)
-// ============================================================================
 
 bool isSystemFull() {
   for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
@@ -192,13 +185,11 @@ bool uidEquals(const char* a, const char* b) {
   return strcmp(ca, cb) == 0;
 }
 
-// ============================================================================
 // 5. MASTER KEY SEQUENTIAL & INDIVIDUAL ACTIONS
-// ============================================================================
 
 void executeGrandMasterOpen(const char* cardUid) {
   Serial.println("\n========================================================");
-  Serial.println(" [MASTER KEY] >>> GRAND MASTER CARD DETECTED! <<<");
+  Serial.println("  GRAND MASTER CARD DETECTED! ");
   Serial.println("========================================================");
 
   uint32_t seq = getNextSequence();
@@ -253,9 +244,7 @@ void executeIndividualMasterOpen(uint8_t lockerIdx, const char* cardUid) {
   triggerFeedback(2, 100, false);
 }
 
-// ============================================================================
 // 6. CORE 1 TASK: Hardware & Real-Time Logic (0ms Network Wait)
-// ============================================================================
 
 void core1HardwareTask(void* pvParameters) {
   esp_task_wdt_add(NULL); // Subscribe this task to Watchdog Timer
@@ -362,9 +351,7 @@ void core1HardwareTask(void* pvParameters) {
   }
 }
 
-// ============================================================================
 // 7. CORE 0: Background Wi-Fi, API Sync, LittleFS & Sequence Protection
-// ============================================================================
 
 bool postTransaction(const TxEvent& ev) {
   if (wifiMulti.run() != WL_CONNECTED) return false;
@@ -517,9 +504,7 @@ void core0NetworkTask(void* pvParameters) {
   }
 }
 
-// ============================================================================
 // 8. SETUP & MAIN LOOP
-// ============================================================================
 
 void setup() {
   Serial.begin(115200);

@@ -1,0 +1,9 @@
+# File: .env
+
+# Replace <username>, <password>, and your cluster address with your actual Atlas credentials.
+# Notice "smart_locker_db" placed right after .mongodb.net/ and before the ? mark!
+
+DATABASE_URL="mongodb+srv://xerokeyadmin:Adminrun143@cluster0.nelcdkl.mongodb.net/xerokey"
+
+# Secret Hardware API Key for ESP32 Authentication
+ESP_API_KEY="xk_live_f4faea8cb68850525634ab1b214c8dd73104ad7b6aea16a5"

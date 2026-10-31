@@ -128,7 +128,7 @@ export function PublicLandingPage({
               href="/admin"
               className="px-3.5 py-1.5 text-[10px] font-mono uppercase tracking-widest border border-zinc-800 bg-zinc-900/60 text-zinc-200 hover:bg-white hover:text-black transition-all"
             >
-              SECURITY TERMINAL
+              ADMIN LOGIN
             </Link>
           </div>
         </div>
@@ -145,7 +145,7 @@ export function PublicLandingPage({
             }`}
           />
           <span className="text-[10px] sm:text-xs font-mono uppercase tracking-[0.25em] text-zinc-400">
-            XERO KEY SECURITY // AUTONOMOUS NFC LOCKER
+            XERO KEY // AUTONOMOUS NFC LOCKER
           </span>
         </div>
 
@@ -154,7 +154,7 @@ export function PublicLandingPage({
         </h1>
 
         <p className="mt-4 max-w-xl mx-auto text-xs sm:text-sm font-mono text-zinc-400 tracking-wider leading-relaxed">
-          JUST TAP YOUR UNIVERSITY ID TO GET A LOCKER.
+          JUST TAP YOUR UNIVERSITY ID TO GET A LOCKER!
         </p>
 
         {/* Live Digital Counter Readouts */}
@@ -164,7 +164,7 @@ export function PublicLandingPage({
             <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent" />
             <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-500">
               <span>DAILY SESSIONS</span>
-              <span className="text-emerald-400">24H TELEMETRY</span>
+              <span className="text-emerald-400">24 HOUR</span>
             </div>
             <div className="mt-4 flex items-baseline justify-center sm:justify-start gap-3">
               <span className="text-4xl sm:text-5xl font-mono font-light tracking-widest text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.15)]">
@@ -180,7 +180,7 @@ export function PublicLandingPage({
           <div className="relative group border border-zinc-800/90 bg-zinc-950/70 backdrop-blur-sm p-6 overflow-hidden transition-all hover:border-zinc-700">
             <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-500/80 to-transparent" />
             <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-500">
-              <span>ALL-TIME USERS REGISTERED</span>
+              <span>ALL TIME USERS REGISTERED</span>
             </div>
             <div className="mt-4 flex items-baseline justify-center sm:justify-start gap-3">
               <span className="text-4xl sm:text-5xl font-mono font-light tracking-widest text-white drop-shadow-[0_0_15px_rgba(255,255,255,0.15)]">
@@ -210,7 +210,7 @@ export function PublicLandingPage({
                     : "text-rose-400"
                 }
               >
-                {stats.availableLockers > 0 ? "BAYS READY" : "AT CAPACITY"}
+                {stats.availableLockers > 0 ? "LOCKER READY" : "AT CAPACITY"}
               </span>
             </div>
             <div className="mt-4 flex items-baseline justify-center sm:justify-start gap-2">
@@ -236,7 +236,7 @@ export function PublicLandingPage({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 border-b border-zinc-900 pb-4">
           <div>
             <p className="text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-500">
-              XERO KEY SECURITY // 12-BAY Locker
+              XERO KEY // 12 BAY Locker
             </p>
             <h2 className="text-lg sm:text-xl font-light tracking-widest uppercase text-white mt-1">
               LIVE LOCKER Status
@@ -414,18 +414,18 @@ export function PublicLandingPage({
       <section className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 py-16 border-t border-zinc-900">
         <div className="max-w-3xl">
           <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
-            XERO KEY SECURITY // HARDWARE &amp; CLOUD ARCHITECTURE
+            XERO KEY // HARDWARE &amp; CLOUD ARCHITECTURE
           </p>
           <h2 className="mt-2 text-2xl sm:text-3xl font-light tracking-wider text-white uppercase">
-            XERO KEY Smart Locker System architecture with offline-first capabilities.
+            XERO KEY System architecture with offline first capabilities.
           </h2>
           <p className="mt-4 text-xs sm:text-sm font-mono text-zinc-400 leading-relaxed">
-            Engineered for high-reliability physical access control. The Xero
+            Engineered for fastest checkin & checkout with high security. The Xero
             Key hardware node operates on an ESP32 microcontroller paired with
-            a NFC transceiver and a 12-channel opto-isolated relay
-            array. Asynchronous dual-slot state machines allow concurrent
-            check-in and check-out operations with 500KB LittleFS ring-buffer
-            protection and 15-second live heartbeat telemetry.
+            a NFC transceiver and a 12 channel opto-isolated relay
+            array. Asynchronous dual slot state machines allow concurrent
+            checkin and checkout operations with 500KB LittleFS ring buffer
+            protection and 15 second live heartbeat telemetry.
           </p>
         </div>
 
@@ -477,7 +477,7 @@ export function PublicLandingPage({
               500KB LITTLEFS GUARD
             </h3>
             <p className="mt-2 text-xs font-mono text-zinc-400 leading-relaxed">
-              Self-pruning 500KB LittleFS offline CSV storage paired with DS3231
+              Self pruning 500KB LittleFS offline CSV storage paired with DS3231
               RTC timestamps prevents flash overflow during outages.
             </p>
           </div>
@@ -492,16 +492,14 @@ export function PublicLandingPage({
               <div className="flex items-center gap-2.5">
                 <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981]" />
                 <span className="text-[10px] font-mono uppercase tracking-[0.3em] text-zinc-400">
-                  Powered by runcorps.tech
+                  Powered by xerorun.com
                 </span>
               </div>
               <h3 className="text-xl font-mono font-semibold tracking-wider text-white uppercase">
-                XERO KEY SECURITY
+                XERO KEY
               </h3>
               <p className="text-xs font-mono text-zinc-400 leading-relaxed max-w-md">
-                Next-generation autonomous physical storage and telemetry
-                systems. Designed for universities, high-security research
-                facilities, and modern smart campuses.
+                Next generation autonomous locker. Designed for universities library and other spaces, high security with fastest chechin & checkout.
               </p>
               <div className="pt-2 flex flex-wrap items-center gap-3 text-[11px] font-mono text-zinc-500">
                 <span className="px-2.5 py-1 border border-zinc-800 bg-black text-zinc-300">
@@ -536,8 +534,7 @@ export function PublicLandingPage({
 
                 <p className="mt-2 text-xs font-mono text-zinc-400 leading-relaxed">
                   Software Engineering &amp; Full-Stack Developer specializing
-                  in modern web architecture, embedded IoT telemetry, and
-                  minimalist dark-mode interfaces.
+                  in modern web architecture.
                 </p>
               </div>
 
@@ -583,8 +580,7 @@ export function PublicLandingPage({
 
           <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-[11px] font-mono text-zinc-500">
             <p>
-              © {mounted ? new Date().getFullYear() : "2026"} XERO KEY SECURITY
-              MATRIX // CREATED BY ASHIQUR RAHMAN. ALL RIGHTS RESERVED.
+              © {mounted ? new Date().getFullYear() : "2026"} XERO KEY // POWERED BY XERORUN.COM // ALL RIGHTS RESERVED.
             </p>
             <p
               className={
