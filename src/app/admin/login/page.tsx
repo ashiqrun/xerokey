@@ -34,36 +34,36 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between p-6 selection:bg-emerald-500/30 selection:text-emerald-200">
+    <div className="min-h-screen bg-black text-zinc-100 flex flex-col justify-between p-4 sm:p-6 selection:bg-emerald-500/30 selection:text-emerald-200">
       {/* Top Bar */}
-      <div className="max-w-7xl w-full mx-auto flex items-center justify-between border-b border-zinc-900 pb-4">
+      <header className="max-w-7xl w-full mx-auto flex items-center justify-between border-b border-zinc-900 pb-4 gap-2">
         <div className="flex items-center gap-2.5">
           <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981]" />
-          <span className="text-xs font-mono font-bold tracking-[0.35em] text-white">
-            XERO KEY
+          <span className="text-xs font-mono font-bold tracking-[0.3em] text-white">
+            XEROKEY
           </span>
         </div>
         <Link
           href="/"
-          className="text-xs font-mono uppercase tracking-widest text-zinc-400 hover:text-white transition-colors"
+          className="text-[11px] sm:text-xs font-mono uppercase tracking-wider sm:tracking-widest text-zinc-400 hover:text-white transition-colors"
         >
           ← PUBLIC MATRIX
         </Link>
-      </div>
+      </header>
 
       {/* Center Login Box */}
-      <div className="max-w-md w-full mx-auto border border-zinc-800 bg-zinc-950/80 p-8 relative">
+      <main className="max-w-md w-full mx-auto my-8 border border-zinc-800 bg-zinc-950/80 p-5 sm:p-8 relative">
         <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-emerald-500 to-transparent" />
 
         <p className="text-[10px] font-mono uppercase tracking-[0.3em] text-emerald-400">
-          XERO KEY // ADMIN
+          XEROKEY // ADMIN CONTROL
         </p>
-        <h1 className="mt-2 text-2xl font-light tracking-wider text-white uppercase">
+        <h1 className="mt-2 text-xl sm:text-2xl font-light tracking-wider text-white uppercase">
           ADMIN PANEL LOGIN
         </h1>
-        <p className="mt-2 text-xs font-mono text-zinc-500">
-          Enter your Xero Key administrator credentials to access hardware
-          overrides and session logs.
+        <p className="mt-2 text-xs font-mono text-zinc-500 leading-relaxed">
+          Enter your Xerokey administrator credentials to access hardware overrides,
+          manage 12-bay relays, and audit session logs.
         </p>
 
         {error && (
@@ -72,14 +72,16 @@ export default function AdminLoginPage() {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+        <form onSubmit={handleSubmit} className="mt-6 space-y-4 sm:space-y-5">
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-zinc-400 mb-2">
+            <label className="block text-[10px] font-mono uppercase tracking-widest text-zinc-400 mb-1.5 sm:mb-2">
               ADMIN USERNAME
             </label>
             <input
               type="text"
               required
+              autoCapitalize="none"
+              autoCorrect="off"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="admin"
@@ -88,7 +90,7 @@ export default function AdminLoginPage() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-mono uppercase tracking-widest text-zinc-400 mb-2">
+            <label className="block text-[10px] font-mono uppercase tracking-widest text-zinc-400 mb-1.5 sm:mb-2">
               SECURITY PASSKEY
             </label>
             <input
@@ -104,19 +106,17 @@ export default function AdminLoginPage() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full py-3 text-xs font-mono uppercase tracking-[0.2em] bg-white text-black font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-all"
+            className="w-full py-3 text-xs font-mono uppercase tracking-[0.18em] bg-white text-black font-semibold hover:bg-zinc-200 disabled:opacity-50 transition-all touch-manipulation active:scale-[0.99]"
           >
             {isLoading ? "VERIFYING CREDENTIALS..." : "INITIALIZE SESSION →"}
           </button>
         </form>
-
-        
-      </div>
+      </main>
 
       {/* Bottom Footer */}
-      <div className="max-w-7xl w-full mx-auto text-center text-[11px] font-mono text-zinc-600">
-        XERO KEY SECURITY
-      </div>
+      <footer className="max-w-7xl w-full mx-auto text-center text-[10px] sm:text-[11px] font-mono text-zinc-600">
+        XEROKEY SECURITY MATRIX // POWERED BY XERORUN.COM
+      </footer>
     </div>
   );
 }

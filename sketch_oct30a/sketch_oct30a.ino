@@ -137,6 +137,20 @@ void triggerFeedback(uint8_t beeps, uint16_t intervalMs, bool blinkRed) {
   if (blinkRed) digitalWrite(PIN_LED_RED, HIGH);
 }
 
+inline void triggerSuccessBeep() {
+  triggerFeedback(1, 120, false);
+}
+
+inline void triggerRejectionBeep() {
+  // 3-beep rejection sequence with red LED for non-7-byte or unauthorized cards
+  triggerFeedback(3, 80, true);
+}
+
+inline void triggerLockerFullLongBeep() {
+  // Long continuous beep (1000ms) with red LED when all 12 lockers are occupied
+  triggerFeedback(1, 1000, true);
+}
+
 void pulseLocker(uint8_t index) {
   if (mcpConnected) {
     mcp.digitalWrite(index, LOW); // Active-LOW relay engage
@@ -317,14 +331,14 @@ void core1HardwareTask(void* pvParameters) {
         strlcat(scannedUid, byteBuf, sizeof(scannedUid));
       }
 
-      Serial.printf("[NFC SCAN] Card UID: %s (Size: %d bytes)\n", scannedUid, rfid.uid.size);
+      Serial.printf("[NFC SCAN] Card UID: %s (Length: %d bytes)\n", scannedUid, rfid.uid.size);
 
-      // --- 1. Check for Grand Master Key ---
+      // --- 1. Check for Grand Master Key (Supports 7-byte or 4-byte) ---
       if (uidEquals(scannedUid, MASTER_UID_ALL)) {
         executeGrandMasterOpen(scannedUid);
       }
       else {
-        // --- 2. Check for 12 Individual Master Keys ---
+        // --- 2. Check for 12 Individual Master Keys (Supports 7-byte or 4-byte) ---
         int8_t matchedMasterBay = -1;
         for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
           if (uidEquals(scannedUid, MASTER_UID_LOCKERS[i])) {
@@ -337,70 +351,78 @@ void core1HardwareTask(void* pvParameters) {
           executeIndividualMasterOpen(matchedMasterBay, scannedUid);
         }
         else {
-          // --- 3. Regular User Card (Check-Out or Check-In) ---
-          int8_t existingIdx = -1;
-          int8_t firstEmptyIdx = -1;
-
-          for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
-            if (lockerOccupied[i] && uidEquals(lockerOwnerUid[i], scannedUid)) {
-              existingIdx = i;
-              break;
-            }
-            if (!lockerOccupied[i] && firstEmptyIdx == -1) {
-              firstEmptyIdx = i;
-            }
+          // --- 3. Regular User NFC: STRICT 7-BYTE UID RESTRICTION ---
+          if (rfid.uid.size != 7) {
+            Serial.printf("[SECURITY] Card UID %s REJECTED: User card must be 7-byte UID (received %d bytes).\n", scannedUid, rfid.uid.size);
+            triggerRejectionBeep(); // 3-time warning beep
           }
+          else {
+            // Valid 7-byte User NFC Card
+            int8_t existingIdx = -1;
+            int8_t firstEmptyIdx = -1;
 
-          if (existingIdx != -1) {
-            // Action A: Check-Out
-            lockerOccupied[existingIdx] = false;
-            lockerOwnerUid[existingIdx][0] = '\0';
-            saveSlotToNVS(existingIdx);
-            pulseLocker(existingIdx);
-            syncStatusLeds();
-            triggerFeedback(1, 120, false);
+            for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
+              if (lockerOccupied[i] && uidEquals(lockerOwnerUid[i], scannedUid)) {
+                existingIdx = i;
+                break;
+              }
+              if (!lockerOccupied[i] && firstEmptyIdx == -1) {
+                firstEmptyIdx = i;
+              }
+            }
 
-            Serial.printf("[ACTION] USER CHECK-OUT -> Locker L-%02d Unlocked!\n", existingIdx + 1);
+            if (existingIdx != -1) {
+              // Action A: Check-Out
+              lockerOccupied[existingIdx] = false;
+              lockerOwnerUid[existingIdx][0] = '\0';
+              saveSlotToNVS(existingIdx);
+              pulseLocker(existingIdx);
+              syncStatusLeds();
+              triggerSuccessBeep();
 
-            uint32_t seq = getNextSequence();
-            uint32_t ts = getEpochTime();
+              Serial.printf("[ACTION] USER CHECK-OUT -> Locker L-%02d Unlocked!\n", existingIdx + 1);
 
-            TxEvent ev;
-            ev.seq = seq;
-            ev.timestamp = ts;
-            strlcpy(ev.uid, scannedUid, sizeof(ev.uid));
-            ev.lockerNum = existingIdx + 1;
-            strlcpy(ev.action, "checkout", sizeof(ev.action));
-            ev.forcedBy[0] = '\0';
-            xQueueSend(txQueue, &ev, 0);
+              uint32_t seq = getNextSequence();
+              uint32_t ts = getEpochTime();
 
-          } else if (firstEmptyIdx != -1) {
-            // Action B: Check-In
-            lockerOccupied[firstEmptyIdx] = true;
-            strlcpy(lockerOwnerUid[firstEmptyIdx], scannedUid, sizeof(lockerOwnerUid[firstEmptyIdx]));
-            saveSlotToNVS(firstEmptyIdx);
-            pulseLocker(firstEmptyIdx);
-            syncStatusLeds();
-            triggerFeedback(1, 120, false);
+              TxEvent ev;
+              ev.seq = seq;
+              ev.timestamp = ts;
+              strlcpy(ev.uid, scannedUid, sizeof(ev.uid));
+              ev.lockerNum = existingIdx + 1;
+              strlcpy(ev.action, "checkout", sizeof(ev.action));
+              ev.forcedBy[0] = '\0';
+              xQueueSend(txQueue, &ev, 0);
 
-            Serial.printf("[ACTION] USER CHECK-IN -> Assigned Locker L-%02d!\n", firstEmptyIdx + 1);
+            } else if (firstEmptyIdx != -1) {
+              // Action B: Check-In
+              lockerOccupied[firstEmptyIdx] = true;
+              strlcpy(lockerOwnerUid[firstEmptyIdx], scannedUid, sizeof(lockerOwnerUid[firstEmptyIdx]));
+              saveSlotToNVS(firstEmptyIdx);
+              pulseLocker(firstEmptyIdx);
+              syncStatusLeds();
+              triggerSuccessBeep();
 
-            uint32_t seq = getNextSequence();
-            uint32_t ts = getEpochTime();
+              Serial.printf("[ACTION] USER CHECK-IN -> Assigned Locker L-%02d!\n", firstEmptyIdx + 1);
 
-            TxEvent ev;
-            ev.seq = seq;
-            ev.timestamp = ts;
-            strlcpy(ev.uid, scannedUid, sizeof(ev.uid));
-            ev.lockerNum = firstEmptyIdx + 1;
-            strlcpy(ev.action, "checkin", sizeof(ev.action));
-            ev.forcedBy[0] = '\0';
-            xQueueSend(txQueue, &ev, 0);
+              uint32_t seq = getNextSequence();
+              uint32_t ts = getEpochTime();
 
-          } else {
-            // Action C: Lockers Full
-            Serial.println("[FULL] All 12 Lockers Occupied! Rejecting user card.");
-            triggerFeedback(3, 70, true);
+              TxEvent ev;
+              ev.seq = seq;
+              ev.timestamp = ts;
+              strlcpy(ev.uid, scannedUid, sizeof(ev.uid));
+              ev.lockerNum = firstEmptyIdx + 1;
+              strlcpy(ev.action, "checkin", sizeof(ev.action));
+              ev.forcedBy[0] = '\0';
+              xQueueSend(txQueue, &ev, 0);
+
+            } else {
+              // Action C: Lockers Full -> Long Type Beep
+              Serial.printf("[FULL] All 12 Lockers Occupied! Card UID %s denied check-in with LONG BEEP.\n", scannedUid);
+              triggerLockerFullLongBeep(); // Long continuous warning beep (1000ms)
+              lastScanTime = now + 400; // Cooldown cushion for long beep
+            }
           }
         }
       }
