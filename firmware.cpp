@@ -12,6 +12,9 @@
 #include <sys/time.h>
 #include <esp_task_wdt.h> // Watchdog Timer Library
 
+// NVS Thread-Safety Mutex (Preferences is NOT thread-safe across cores)
+SemaphoreHandle_t nvsMutex = NULL;
+
 // 1. NETWORK & API CONFIGURATION
 
 #define USE_LOCAL_SERVER
@@ -82,18 +85,19 @@ WiFiMulti wifiMulti;
 QueueHandle_t txQueue;
 
 bool mcpConnected = false;
-bool lockerOccupied[NUM_LOCKERS] = {false};
+volatile bool lockerOccupied[NUM_LOCKERS] = {false};
 char lockerOwnerUid[NUM_LOCKERS][32] = {{0}};
 
-uint32_t currentSeq = 0;
-uint32_t lastServerSyncedSeq = 0;
+volatile uint32_t currentSeq = 0;
+volatile uint32_t lastServerSyncedSeq = 0;
 
-uint32_t relayOffAt[NUM_LOCKERS] = {0};
-uint32_t buzzTimer = 0;
-uint16_t buzzInterval = 0;
-uint8_t  buzzEdgesLeft = 0;
-bool     buzzSyncRedLed = false;
-uint32_t lastScanTime = 0;
+volatile uint32_t relayOffAt[NUM_LOCKERS] = {0};
+volatile uint32_t buzzTimer = 0;
+volatile uint16_t buzzInterval = 0;
+volatile uint8_t  buzzEdgesLeft = 0;
+volatile bool     buzzSyncRedLed = false;
+volatile uint32_t lastScanTime = 0;
+uint32_t lastRfidCheck = 0; // RC522 health check timer
 
 // 4. CORE 1 HELPERS (Zero Blocking, Local NVS & Hardware Control)
 
@@ -141,40 +145,51 @@ void pulseLocker(uint8_t index) {
 }
 
 void saveSlotToNVS(uint8_t index) {
-  prefs.begin("lockers", false);
-  char key[8];
-  snprintf(key, sizeof(key), "u%02d", index);
-  if (lockerOccupied[index]) {
-    prefs.putString(key, lockerOwnerUid[index]);
-  } else {
-    prefs.remove(key);
+  if (xSemaphoreTake(nvsMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+    prefs.begin("lockers", false);
+    char key[8];
+    snprintf(key, sizeof(key), "u%02d", index);
+    if (lockerOccupied[index]) {
+      prefs.putString(key, lockerOwnerUid[index]);
+    } else {
+      prefs.remove(key);
+    }
+    prefs.end();
+    xSemaphoreGive(nvsMutex);
   }
-  prefs.end();
 }
 
 void loadStateFromNVS() {
-  prefs.begin("lockers", false);
-  for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
-    char key[8];
-    snprintf(key, sizeof(key), "u%02d", i);
-    String saved = prefs.getString(key, "");
-    if (saved.length() > 0) {
-      lockerOccupied[i] = true;
-      strlcpy(lockerOwnerUid[i], saved.c_str(), sizeof(lockerOwnerUid[i]));
-    } else {
-      lockerOccupied[i] = false;
-      lockerOwnerUid[i][0] = '\0';
+  if (xSemaphoreTake(nvsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    prefs.begin("lockers", false);
+    for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
+      char key[8];
+      snprintf(key, sizeof(key), "u%02d", i);
+      String saved = prefs.getString(key, "");
+      if (saved.length() > 0) {
+        lockerOccupied[i] = true;
+        strlcpy(lockerOwnerUid[i], saved.c_str(), sizeof(lockerOwnerUid[i]));
+      } else {
+        lockerOccupied[i] = false;
+        lockerOwnerUid[i][0] = '\0';
+      }
     }
+    prefs.end();
+    xSemaphoreGive(nvsMutex);
   }
-  prefs.end();
 }
 
 uint32_t getNextSequence() {
-  prefs.begin("seq_tracker", false);
-  currentSeq = prefs.getUInt("seq", 0) + 1;
-  prefs.putUInt("seq", currentSeq);
-  prefs.end();
-  return currentSeq;
+  uint32_t seq = 0;
+  if (xSemaphoreTake(nvsMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+    prefs.begin("seq_tracker", false);
+    currentSeq = prefs.getUInt("seq", 0) + 1;
+    prefs.putUInt("seq", currentSeq);
+    prefs.end();
+    seq = currentSeq;
+    xSemaphoreGive(nvsMutex);
+  }
+  return seq;
 }
 
 uint32_t getEpochTime() {
@@ -188,11 +203,11 @@ bool uidEquals(const char* a, const char* b) {
   if (!a || !b) return false;
   char ca[36], cb[36];
   uint8_t ja = 0, jb = 0;
-  for (uint8_t i = 0; a[i] && ja < 35; i++) {
+  for (uint16_t i = 0; a[i] && ja < 35 && i < 64; i++) {
     if (a[i] != ':' && a[i] != ' ' && a[i] != '-') ca[ja++] = toupper((unsigned char)a[i]);
   }
   ca[ja] = '\0';
-  for (uint8_t i = 0; b[i] && jb < 35; i++) {
+  for (uint16_t i = 0; b[i] && jb < 35 && i < 64; i++) {
     if (b[i] != ':' && b[i] != ' ' && b[i] != '-') cb[jb++] = toupper((unsigned char)b[i]);
   }
   cb[jb] = '\0';
@@ -220,6 +235,7 @@ void executeGrandMasterOpen(const char* cardUid) {
   xQueueSend(txQueue, &ev, 0);
 
   for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
+    esp_task_wdt_reset(); // Prevent WDT timeout during sequential unlock
     pulseLocker(i);
     lockerOccupied[i] = false;
     lockerOwnerUid[i][0] = '\0';
@@ -284,12 +300,23 @@ void core1HardwareTask(void* pvParameters) {
       if (buzzEdgesLeft == 0) syncStatusLeds();
     }
 
+    // RC522 Health Check — re-init if SPI communication lost (every 30s)
+    if (now - lastRfidCheck >= 30000) {
+      lastRfidCheck = now;
+      byte ver = rfid.PCD_ReadRegister(rfid.VersionReg);
+      if (ver == 0x00 || ver == 0xFF) {
+        Serial.println("[WARN] RC522 SPI failure detected! Re-initializing...");
+        rfid.PCD_Init();
+        vTaskDelay(pdMS_TO_TICKS(50));
+      }
+    }
+
     if ((now - lastScanTime > 800) && rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
       lastScanTime = now;
 
       char scannedUid[32] = {0};
       for (byte b = 0; b < rfid.uid.size && b < 10; b++) {
-        char byteBuf[4];
+        char byteBuf[6];
         snprintf(byteBuf, sizeof(byteBuf), "%s%02X", (b > 0 ? ":" : ""), rfid.uid.uidByte[b]);
         strlcat(scannedUid, byteBuf, sizeof(scannedUid));
       }
@@ -433,11 +460,22 @@ void flushOfflineLogs() {
   File f = LittleFS.open(LOG_FILE_PATH, "r");
   if (!f) return;
 
-  String remaining = "";
+  // Use a temp file to store unsent lines (avoids heap-killing String accumulation)
+  const char* TMP_PATH = "/offline_tmp.csv";
+  File tmp = LittleFS.open(TMP_PATH, "w");
+  bool hasFailed = false;
+  bool hasRemaining = false;
+
   while (f.available()) {
     String line = f.readStringUntil('\n');
     line.trim();
     if (line.length() == 0) continue;
+
+    // If a previous POST failed, write all remaining lines to temp file directly
+    if (hasFailed) {
+      if (tmp) { tmp.println(line); hasRemaining = true; }
+      continue;
+    }
 
     int p1 = line.indexOf(','); int p2 = line.indexOf(',', p1 + 1);
     int p3 = line.indexOf(',', p2 + 1); int p4 = line.indexOf(',', p3 + 1);
@@ -460,21 +498,22 @@ void flushOfflineLogs() {
       strlcpy(ev.forcedBy, frc.c_str(), sizeof(ev.forcedBy));
 
       if (!postTransaction(ev)) {
-        remaining += line + "\n";
-        while (f.available()) remaining += f.readStringUntil('\n') + "\n";
-        break;
+        hasFailed = true;
+        if (tmp) { tmp.println(line); hasRemaining = true; }
       } else {
         if (seq > lastServerSyncedSeq) lastServerSyncedSeq = seq;
       }
     }
   }
   f.close();
+  if (tmp) tmp.close();
 
-  if (remaining.length() == 0) {
+  if (!hasRemaining) {
     LittleFS.remove(LOG_FILE_PATH);
+    LittleFS.remove(TMP_PATH);
   } else {
-    File fw = LittleFS.open(LOG_FILE_PATH, "w");
-    if (fw) { fw.print(remaining); fw.close(); }
+    LittleFS.remove(LOG_FILE_PATH);
+    LittleFS.rename(TMP_PATH, LOG_FILE_PATH);
   }
 }
 
@@ -555,6 +594,9 @@ void setup() {
   
   esp_task_wdt_add(NULL); // Subscribe main setup/loop task
 
+  // Create NVS mutex for thread-safe Preferences access across cores
+  nvsMutex = xSemaphoreCreateMutex();
+
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_RED,   OUTPUT);
   pinMode(PIN_BUZZER,    OUTPUT);
@@ -573,9 +615,12 @@ void setup() {
   rfid.PCD_Init();
 
   LittleFS.begin(true);
-  prefs.begin("seq_tracker", false);
-  currentSeq = prefs.getUInt("seq", 0);
-  prefs.end();
+  if (xSemaphoreTake(nvsMutex, pdMS_TO_TICKS(1000)) == pdTRUE) {
+    prefs.begin("seq_tracker", false);
+    currentSeq = prefs.getUInt("seq", 0);
+    prefs.end();
+    xSemaphoreGive(nvsMutex);
+  }
 
   loadStateFromNVS();
   syncStatusLeds();
@@ -588,7 +633,7 @@ void setup() {
   }
 
   txQueue = xQueueCreate(48, sizeof(TxEvent));
-  xTaskCreatePinnedToCore(core1HardwareTask, "Core1_HW",  4096, NULL, configMAX_PRIORITIES - 1, NULL, 1);
+  xTaskCreatePinnedToCore(core1HardwareTask, "Core1_HW",  8192, NULL, configMAX_PRIORITIES - 1, NULL, 1);
   xTaskCreatePinnedToCore(core0NetworkTask,  "Core0_Net", 8192, NULL, 1,                        NULL, 0);
 }
 
