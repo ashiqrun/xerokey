@@ -105,18 +105,17 @@ export function getAllMasterKeysRegistry() {
     {
       id: "grand-master",
       type: "GRAND_MASTER" as const,
-      lockerTarget: "ALL (L-01 to L-12)",
+      lockerTarget: "ALL L01 to L12",
       uid: GRAND_MASTER_UID,
-      label: "GRAND MASTER KEY",
-      description: "Opens all 12 lockers sequentially one-by-one with 600ms pulse intervals.",
+      label: "FIRE KEY",
+      description: "Opens all lockers sequentially.",
     },
     ...INDIVIDUAL_MASTER_UIDS.map((uid, idx) => ({
       id: `master-l${idx + 1}`,
       type: "INDIVIDUAL_MASTER" as const,
-      lockerTarget: `BAY L-${String(idx + 1).padStart(2, "0")}`,
+      lockerTarget: `L${String(idx + 1).padStart(2, "0")}`,
       uid,
-      label: `MASTER KEY - BAY ${idx + 1}`,
-      description: `Direct master override clearance for Locker Bay #${idx + 1}.`,
+      label: `MASTER KEY L${idx + 1}`,
     })),
   ];
 }

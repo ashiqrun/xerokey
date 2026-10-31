@@ -484,7 +484,7 @@ export default function AdminDashboard({
               />
               <div>
                 <p className="text-[9px] sm:text-[10px] font-mono uppercase tracking-[0.25em] text-zinc-500">
-                  XEROKEY SECURITY // AUTO SYNC (3.0S)
+                  
                 </p>
                 <h1 className="text-base sm:text-lg md:text-xl font-semibold tracking-tight text-white">
                   XEROKEY CONTROL TERMINAL
@@ -630,9 +630,7 @@ export default function AdminDashboard({
             {/* 1. COUNTS */}
             <section>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-500">
-                  01 // XEROKEY SECURITY COUNTS
-                </h2>
+                
                 <div className="flex items-center gap-3">
                   <span className="text-[10px] font-mono px-2 py-0.5 border border-zinc-800 bg-zinc-950 text-zinc-400">
                     HW SYNC SEQ: #{stats?.lastSyncedSeq ?? 0}
@@ -724,7 +722,7 @@ export default function AdminDashboard({
             <section>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-500">
-                  02 // XEROKEY HARDWARE CONTROLS (12 LOCKERS)
+                  ALL LOCKER STATUS //
                 </h2>
                 <div className="flex items-center gap-4 text-xs font-mono">
                   <span className="flex items-center gap-2 text-zinc-400">
@@ -779,7 +777,7 @@ export default function AdminDashboard({
 
                         <div className="my-3 sm:my-4 flex items-baseline justify-between">
                           <span className="text-2xl sm:text-3xl font-mono font-light text-white">
-                            L-{formattedNum}
+                            L{formattedNum}
                           </span>
                           <span className="text-[10px] sm:text-[11px] font-mono text-zinc-500">
                             {occupied ? "LOCKED_ACTIVE" : "STANDBY"}
@@ -808,7 +806,7 @@ export default function AdminDashboard({
               <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4 mb-4">
                 <div>
                   <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-500">
-                    03 // XEROKEY SECURITY LOGS (50 PER PAGE)
+                    LOCKER LOGS (50 PER PAGE) //
                   </h2>
                   <div className="flex flex-wrap items-center gap-3 mt-1">
                     <p className="text-[11px] font-mono text-zinc-400">
@@ -1044,7 +1042,7 @@ export default function AdminDashboard({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-900 pb-4">
               <div>
                 <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-emerald-400">
-                  XEROKEY SECURITY // USERS LEADERBOARD
+                  XEROKEY // LEADERBOARD
                 </h2>
                 <p className="text-sm font-mono text-zinc-300 mt-1">
                   LOCKER UTILIZATION &amp; DURATION RANKINGS
@@ -1176,10 +1174,10 @@ export default function AdminDashboard({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-zinc-900 pb-4">
               <div>
                 <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-emerald-400">
-                  XEROKEY SECURITY // 13 HARDWARE MASTER KEYS
+                  XEROKEY MASTER KEYS //
                 </h2>
                 <p className="text-sm font-mono text-zinc-300 mt-1">
-                  1 GRAND MASTER KEY (SEQUENTIAL UNLOCK) + 12 BAY-SPECIFIC MASTER OVERRIDE KEYS
+                  1 GRAND MASTER KEY & 12 SPECIFIC MASTER KEYS
                 </p>
               </div>
 
@@ -1188,22 +1186,6 @@ export default function AdminDashboard({
                   TOTAL REGISTERED: {masterKeys.length || 13} KEYS
                 </span>
               </div>
-            </div>
-
-            <div className="p-4 border border-zinc-800 bg-zinc-950/60 font-mono text-xs text-zinc-400 space-y-2">
-              <p className="text-white font-semibold uppercase tracking-wider flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                Physical Master Key Operation &amp; Dual Format Support (7-byte / 4-byte):
-              </p>
-              <p>
-                • <strong>Grand Master Key</strong>: When scanned on the ESP32 RFID sensor, unlocks all 12 locker bays sequentially one-by-one with 600ms safety delays. Immediately resets all lockers in ESP32 internal memory and creates database audit records tagged as <code className="text-amber-300">MASTER_ALL</code>.
-              </p>
-              <p>
-                • <strong>Individual Master Keys (1 to 12)</strong>: When scanned, unlocks that specific locker bay, frees it in ESP32 memory, and records an override log tagged as <code className="text-amber-300">MASTER_KEY</code>.
-              </p>
-              <p>
-                • <strong>Monotonic Hardware Sequence Protection</strong>: Verified Server Sequence: <code className="text-emerald-400">#{stats?.lastSyncedSeq ?? 0}</code>. Offline events buffered in ESP32 flash memory sync cleanly without mismatching or overwriting active states.
-              </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 sm:gap-4">
@@ -1240,7 +1222,7 @@ export default function AdminDashboard({
                               : "border-emerald-500/40 bg-emerald-950/30 text-emerald-400"
                           }`}
                         >
-                          {isGrand ? "GRAND MASTER" : "BAY OVERRIDE"}
+                          {isGrand ? "FIRE" : "SPECIFIC"}
                         </span>
                       </div>
 
@@ -1294,7 +1276,7 @@ export default function AdminDashboard({
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-500">
-                    01 // XEROKEY SECURITY ADMINS
+                    XEROKEY ADMINS //
                   </h2>
                   <p className="text-[11px] font-mono text-zinc-600 mt-1">
                     AUDIT OVERRIDE LOGS, ROTATE PASSKEYS, OR REVOKE CLEARANCE
