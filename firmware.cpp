@@ -6,57 +6,55 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiMulti.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <LittleFS.h>
 #include <time.h>
 #include <sys/time.h>
 #include <esp_task_wdt.h> // Watchdog Timer Library
 
-// NVS Thread-Safety Mutex (Preferences is NOT thread-safe across cores)
-SemaphoreHandle_t nvsMutex = NULL;
+// Mutex Locks for Thread Safety Across ESP32 Dual Cores
+SemaphoreHandle_t nvsMutex = NULL;  // Preferences NVS Mutex
+SemaphoreHandle_t i2cMutex = NULL;  // I2C Bus Mutex (protects shared Wire between MCP23017 and DS3231)
 
 // 1. NETWORK & API CONFIGURATION
 
-#define USE_LOCAL_SERVER
+// Primary Cloud Production Server (Domain Server - Always contacted primarily)
+#define PRIMARY_API_HOST    "https://www.xerokey.run"
 
-#ifdef USE_LOCAL_SERVER
-  // Mac Local IP (IPv4)
-  #define API_HOST "http://192.168.0.106:3000"
-#else
-  // Production Cloud URL
-  #define API_HOST "https://xerokey.run"
-#endif
+// Secondary Local Development Fallback Server (Only contacted if domain server is unreachable)
+#define SECONDARY_API_HOST  "http://192.168.0.106:3000"
 
-#define API_MAIN_ENDPOINT API_HOST "/api/esp32"
-#define API_PING_ENDPOINT API_HOST "/api/esp32/ping"
-#define API_KEY           "xk_live_f4faea8cb68850525634ab1b214c8dd73104ad7b6aea16a5"
+#define API_KEY             "xk_live_f4faea8cb68850525634ab1b214c8dd73104ad7b6aea16a5"
 
 struct WifiCred { const char* ssid; const char* pass; };
 const WifiCred WIFI_NETWORKS[] = {
-  {"X",   "Run.5080"},
+  {"DIU_Daffodil Smart City",   "diu123456789"},
+  {"X", "Run.5080"},
   {"ashiqrun", "Run.5080"}
 };
 
 // 2. HARDWARE PINS & CONSTANTS
 
-#define PIN_RFID_SS    5   // D5
-#define PIN_RFID_RST   4   // D4
-#define PIN_I2C_SDA    21  // D21
-#define PIN_I2C_SCL    22  // D22
-#define MCP_ADDR       0x20
+#define PIN_RFID_SS      5   // D5
+#define PIN_RFID_RST     4   // D4
+#define PIN_I2C_SDA      21  // D21
+#define PIN_I2C_SCL      22  // D22
+#define MCP_ADDR         0x20
+#define DS3231_I2C_ADDR  0x68 // DS3231 High-Precision Real-Time Clock I2C Address
 
-#define PIN_LED_GREEN  25  // D25
-#define PIN_LED_RED    27  // D27
-#define PIN_BUZZER     13  // D13 (Safe boot GPIO)
+#define PIN_LED_GREEN    25  // D25
+#define PIN_LED_RED      27  // D27
+#define PIN_BUZZER       13  // D13 (Safe boot GPIO)
 
-#define NUM_LOCKERS    12
-#define RELAY_PULSE_MS 1500UL
-#define PING_INTERVAL  15000UL
-#define FLUSH_COOLDOWN 10000UL // 10s guard to prevent server log spamming
-#define MAX_LOG_BYTES  512000UL
-#define LOG_FILE_PATH  "/offline_logs.csv"
+#define NUM_LOCKERS      12
+#define RELAY_PULSE_MS   1500UL
+#define PING_INTERVAL    15000UL
+#define FLUSH_COOLDOWN   10000UL // 10s guard to prevent server log spamming
+#define MAX_LOG_BYTES    512000UL
+#define LOG_FILE_PATH    "/offline_logs.csv"
 
-#define WDT_TIMEOUT    15 // 15 Seconds Hardware Watchdog Timeout
+#define WDT_TIMEOUT      15 // 15 Seconds Hardware Watchdog Timeout
 
 // 3. 13 FIXED MASTER KEYS CONFIGURATION
 
@@ -85,6 +83,7 @@ WiFiMulti wifiMulti;
 QueueHandle_t txQueue;
 
 bool mcpConnected = false;
+bool ds3231Connected = false;
 volatile bool lockerOccupied[NUM_LOCKERS] = {false};
 char lockerOwnerUid[NUM_LOCKERS][32] = {{0}};
 
@@ -99,7 +98,162 @@ volatile bool     buzzSyncRedLed = false;
 volatile uint32_t lastScanTime = 0;
 uint32_t lastRfidCheck = 0; // RC522 health check timer
 
-// 4. CORE 1 HELPERS (Zero Blocking, Local NVS & Hardware Control)
+// 4. DS3231 HARDWARE REAL-TIME CLOCK DRIVER (Offline Accuracy)
+
+static inline uint8_t bcd2dec(uint8_t val) {
+  return ((val / 16 * 10) + (val % 16));
+}
+
+static inline uint8_t dec2bcd(uint8_t val) {
+  return ((val / 10 * 16) + (val % 10));
+}
+
+bool ds3231_init() {
+  if (i2cMutex && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    return false;
+  }
+
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  if (Wire.endTransmission() != 0) {
+    if (i2cMutex) xSemaphoreGive(i2cMutex);
+    ds3231Connected = false;
+    Serial.println("[RTC ERROR] DS3231 RTC not detected at I2C address 0x68!");
+    return false;
+  }
+
+  // Check Status Register (0x0F) for OSF (Oscillator Stop Flag)
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  Wire.write(0x0F);
+  if (Wire.endTransmission() == 0) {
+    Wire.requestFrom((uint8_t)DS3231_I2C_ADDR, (uint8_t)1);
+    if (Wire.available()) {
+      uint8_t status = Wire.read();
+      if (status & 0x80) {
+        Serial.println("[RTC WARNING] DS3231 oscillator was stopped (power loss). Time will be synced when connected.");
+        // Clear OSF bit
+        Wire.beginTransmission(DS3231_I2C_ADDR);
+        Wire.write(0x0F);
+        Wire.write(status & ~0x80);
+        Wire.endTransmission();
+      }
+    }
+  }
+
+  // Control Register (0x0E): Enable oscillator (clear bit 7 EOSC)
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  Wire.write(0x0E);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  if (i2cMutex) xSemaphoreGive(i2cMutex);
+
+  ds3231Connected = true;
+  Serial.println("[RTC SUCCESS] DS3231 Hardware Real-Time Clock online!");
+  return true;
+}
+
+uint32_t ds3231_getEpoch() {
+  if (!ds3231Connected) return 0;
+
+  if (i2cMutex && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    return 0;
+  }
+
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  Wire.write(0x00); // Start at register 00 (seconds)
+  if (Wire.endTransmission() != 0) {
+    if (i2cMutex) xSemaphoreGive(i2cMutex);
+    return 0;
+  }
+
+  uint8_t bytesRead = Wire.requestFrom((uint8_t)DS3231_I2C_ADDR, (uint8_t)7);
+  if (bytesRead < 7) {
+    if (i2cMutex) xSemaphoreGive(i2cMutex);
+    return 0;
+  }
+
+  uint8_t rawSec  = Wire.read();
+  uint8_t rawMin  = Wire.read();
+  uint8_t rawHour = Wire.read();
+  Wire.read(); // Day of week (unused)
+  uint8_t rawDate = Wire.read();
+  uint8_t rawMon  = Wire.read();
+  uint8_t rawYear = Wire.read();
+
+  if (i2cMutex) xSemaphoreGive(i2cMutex);
+
+  uint8_t sec  = bcd2dec(rawSec & 0x7F);
+  uint8_t min  = bcd2dec(rawMin & 0x7F);
+  uint8_t hour = bcd2dec(rawHour & 0x3F); // 24-hour mode
+  uint8_t date = bcd2dec(rawDate & 0x3F);
+  uint8_t mon  = bcd2dec(rawMon & 0x1F);
+  uint16_t year = 2000 + bcd2dec(rawYear);
+
+  if (mon < 1 || mon > 12 || date < 1 || date > 31 || hour > 23 || min > 59 || sec > 59) {
+    return 0;
+  }
+
+  struct tm t;
+  memset(&t, 0, sizeof(struct tm));
+  t.tm_sec  = sec;
+  t.tm_min  = min;
+  t.tm_hour = hour;
+  t.tm_mday = date;
+  t.tm_mon  = mon - 1;     // Months 0-11
+  t.tm_year = year - 1900; // Years since 1900
+  t.tm_isdst = 0;
+
+  time_t epoch = mktime(&t);
+  return (epoch > 0) ? (uint32_t)epoch : 0;
+}
+
+bool ds3231_setEpoch(uint32_t epoch) {
+  if (epoch < 1700000000) return false;
+
+  time_t tSec = (time_t)epoch;
+  struct tm t;
+  gmtime_r(&tSec, &t);
+
+  uint8_t sec  = dec2bcd(t.tm_sec);
+  uint8_t min  = dec2bcd(t.tm_min);
+  uint8_t hour = dec2bcd(t.tm_hour); // 24-hour mode (bit 6 = 0)
+  uint8_t dow  = dec2bcd(t.tm_wday + 1);
+  uint8_t date = dec2bcd(t.tm_mday);
+  uint8_t mon  = dec2bcd(t.tm_mon + 1);
+  uint8_t year = dec2bcd(t.tm_year + 1900 - 2000);
+
+  if (i2cMutex && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    return false;
+  }
+
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  Wire.write(0x00);
+  Wire.write(sec);
+  Wire.write(min);
+  Wire.write(hour);
+  Wire.write(dow);
+  Wire.write(date);
+  Wire.write(mon);
+  Wire.write(year);
+  uint8_t err = Wire.endTransmission();
+
+  // Clear OSF in status register (0x0F)
+  Wire.beginTransmission(DS3231_I2C_ADDR);
+  Wire.write(0x0F);
+  Wire.write(0x00);
+  Wire.endTransmission();
+
+  if (i2cMutex) xSemaphoreGive(i2cMutex);
+
+  if (err == 0) {
+    ds3231Connected = true;
+    Serial.printf("[RTC SYNC] DS3231 hardware RTC calibrated to epoch: %u\n", epoch);
+    return true;
+  }
+  return false;
+}
+
+// 5. CORE 1 HELPERS (Zero Blocking, Local NVS & Hardware Control)
 
 bool isSystemFull() {
   for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
@@ -139,7 +293,10 @@ inline void triggerLockerFullLongBeep() {
 
 void pulseLocker(uint8_t index) {
   if (mcpConnected) {
-    mcp.digitalWrite(index, LOW);
+    if (i2cMutex && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+      mcp.digitalWrite(index, LOW);
+      xSemaphoreGive(i2cMutex);
+    }
   }
   relayOffAt[index] = millis() + RELAY_PULSE_MS;
 }
@@ -193,9 +350,24 @@ uint32_t getNextSequence() {
 }
 
 uint32_t getEpochTime() {
+  // 1. Check ESP32 internal POSIX system clock (seeded from DS3231 or NTP)
   time_t now;
   time(&now);
-  if (now > 1700000000) return (uint32_t)now;
+  if (now > 1700000000) {
+    return (uint32_t)now;
+  }
+
+  // 2. Offline Fallback: Read directly from DS3231 hardware RTC
+  if (ds3231Connected) {
+    uint32_t rtcEpoch = ds3231_getEpoch();
+    if (rtcEpoch > 1700000000) {
+      struct timeval tv = { (time_t)rtcEpoch, 0 };
+      settimeofday(&tv, NULL);
+      return rtcEpoch;
+    }
+  }
+
+  // 3. Absolute Fallback (only if RTC uninitialized and no network)
   return (uint32_t)(millis() / 1000);
 }
 
@@ -214,7 +386,7 @@ bool uidEquals(const char* a, const char* b) {
   return strcmp(ca, cb) == 0;
 }
 
-// 5. MASTER KEY SEQUENTIAL & INDIVIDUAL ACTIONS
+// 6. MASTER KEY SEQUENTIAL & INDIVIDUAL ACTIONS
 
 void executeGrandMasterOpen(const char* cardUid) {
   Serial.println("\n========================================================");
@@ -274,7 +446,7 @@ void executeIndividualMasterOpen(uint8_t lockerIdx, const char* cardUid) {
   triggerFeedback(2, 100, false);
 }
 
-// 6. CORE 1 TASK: Hardware & Real-Time Logic (0ms Network Wait)
+// 7. CORE 1 TASK: Hardware & Real-Time Logic (0ms Network Wait)
 
 void core1HardwareTask(void* pvParameters) {
   esp_task_wdt_add(NULL); // Subscribe this task to Watchdog Timer
@@ -286,7 +458,12 @@ void core1HardwareTask(void* pvParameters) {
 
     for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
       if (relayOffAt[i] && (int32_t)(now - relayOffAt[i]) >= 0) {
-        if (mcpConnected) mcp.digitalWrite(i, HIGH);
+        if (mcpConnected) {
+          if (i2cMutex && xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+            mcp.digitalWrite(i, HIGH);
+            xSemaphoreGive(i2cMutex);
+          }
+        }
         relayOffAt[i] = 0;
       }
     }
@@ -412,32 +589,98 @@ void core1HardwareTask(void* pvParameters) {
   }
 }
 
-// 7. CORE 0: Background Wi-Fi, API Sync, LittleFS & Sequence Protection
+// 8. CORE 0: Background Wi-Fi, API Sync, LittleFS & Sequence Protection
+
+/**
+ * Executes an HTTP or HTTPS request with automatic TLS support and redirect following.
+ * Works seamlessly with both cloud HTTPS (Vercel) and local HTTP development servers.
+ */
+bool executeHttpRequest(const char* host, const char* endpointPath, const char* method, const char* payload, String& responseOut, int& statusCodeOut) {
+  if (!host || strlen(host) == 0) return false;
+  String fullUrl = String(host) + endpointPath;
+  HTTPClient http;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(4500);
+
+  int code = -1;
+  if (fullUrl.startsWith("https://")) {
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure(); // Bypass cert chain validation for Let's Encrypt / Vercel SSL
+    secureClient.setTimeout(5);
+    if (!http.begin(secureClient, fullUrl)) {
+      Serial.printf("[HTTP ERROR] Failed to begin HTTPS connection to: %s\n", fullUrl.c_str());
+      return false;
+    }
+    http.addHeader("x-api-key", API_KEY);
+    if (payload && strlen(payload) > 0) {
+      http.addHeader("Content-Type", "application/json");
+      code = http.POST((uint8_t*)payload, strlen(payload));
+    } else {
+      code = http.GET();
+    }
+    statusCodeOut = code;
+    if (code >= 200 && code < 300) {
+      responseOut = http.getString();
+    }
+    http.end();
+  } else {
+    WiFiClient plainClient;
+    plainClient.setTimeout(4);
+    if (!http.begin(plainClient, fullUrl)) {
+      Serial.printf("[HTTP ERROR] Failed to begin HTTP connection to: %s\n", fullUrl.c_str());
+      return false;
+    }
+    http.addHeader("x-api-key", API_KEY);
+    if (payload && strlen(payload) > 0) {
+      http.addHeader("Content-Type", "application/json");
+      code = http.POST((uint8_t*)payload, strlen(payload));
+    } else {
+      code = http.GET();
+    }
+    statusCodeOut = code;
+    if (code >= 200 && code < 300) {
+      responseOut = http.getString();
+    }
+    http.end();
+  }
+
+  return (code >= 200 && code < 300);
+}
 
 bool postTransaction(const TxEvent& ev) {
   if (wifiMulti.run() != WL_CONNECTED) return false;
-  HTTPClient http;
-  http.begin(API_MAIN_ENDPOINT);
-  http.setTimeout(4000);
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("x-api-key", API_KEY);
 
   char payload[256];
   snprintf(payload, sizeof(payload),
            "{\"seq\":%u,\"timestamp\":%u,\"uid\":\"%s\",\"lockerNumber\":%u,\"action\":\"%s\",\"forcedBy\":\"%s\"}",
            ev.seq, ev.timestamp, ev.uid, ev.lockerNum, ev.action, ev.forcedBy);
 
-  int code = http.POST((uint8_t*)payload, strlen(payload));
-  if (code >= 200 && code < 300) {
-    String responseStr = http.getString();
+  String responseStr;
+  int code = -1;
+
+  // 1. Primary Attempt: Send to Cloud Domain Server (https://www.xerokey.run)
+  bool success = executeHttpRequest(PRIMARY_API_HOST, "/api/esp32", "POST", payload, responseStr, code);
+
+  // 2. Fallback Attempt: If Cloud Domain Server fails and Local Server is configured, try Local Server
+  #ifdef SECONDARY_API_HOST
+  if (!success) {
+    Serial.printf("[NET] Primary domain server unreachable (HTTP %d). Attempting secondary local server...\n", code);
+    success = executeHttpRequest(SECONDARY_API_HOST, "/api/esp32", "POST", payload, responseStr, code);
+  }
+  #endif
+
+  if (success) {
+    Serial.printf("[NET SUCCESS] Transaction seq #%u posted successfully! (HTTP %d)\n", ev.seq, code);
     int idx = responseStr.indexOf("\"lastSyncedSeq\":");
     if (idx > 0) {
       uint32_t sSeq = (uint32_t)responseStr.substring(idx + 16).toInt();
       if (sSeq > lastServerSyncedSeq) lastServerSyncedSeq = sSeq;
     }
+  } else {
+    Serial.printf("[NET FAIL] Could not post transaction seq #%u to any server (last HTTP: %d). Queuing offline.\n", ev.seq, code);
   }
-  http.end();
-  return (code >= 200 && code < 300);
+
+  return success;
 }
 
 void appendOfflineLog(const TxEvent& ev) {
@@ -460,7 +703,6 @@ void flushOfflineLogs() {
   File f = LittleFS.open(LOG_FILE_PATH, "r");
   if (!f) return;
 
-  // Use a temp file to store unsent lines (avoids heap-killing String accumulation)
   const char* TMP_PATH = "/offline_tmp.csv";
   File tmp = LittleFS.open(TMP_PATH, "w");
   bool hasFailed = false;
@@ -471,7 +713,6 @@ void flushOfflineLogs() {
     line.trim();
     if (line.length() == 0) continue;
 
-    // If a previous POST failed, write all remaining lines to temp file directly
     if (hasFailed) {
       if (tmp) { tmp.println(line); hasRemaining = true; }
       continue;
@@ -519,14 +760,23 @@ void flushOfflineLogs() {
 
 void sendHeartbeat() {
   if (wifiMulti.run() != WL_CONNECTED) return;
-  HTTPClient http;
-  http.begin(API_PING_ENDPOINT);
-  http.setTimeout(3000);
-  http.addHeader("x-api-key", API_KEY);
-  int code = http.GET();
 
-  if (code >= 200 && code < 300) {
-    String payload = http.getString();
+  String payload;
+  int code = -1;
+
+  // 1. Primary Attempt: Ping Cloud Domain Server (https://www.xerokey.run)
+  bool success = executeHttpRequest(PRIMARY_API_HOST, "/api/esp32/ping", "GET", NULL, payload, code);
+
+  // 2. Fallback Attempt: If Cloud Domain Server fails, try Secondary Local Server
+  #ifdef SECONDARY_API_HOST
+  if (!success) {
+    Serial.printf("[PING] Primary domain server ping unreachable (HTTP %d). Trying secondary local server...\n", code);
+    success = executeHttpRequest(SECONDARY_API_HOST, "/api/esp32/ping", "GET", NULL, payload, code);
+  }
+  #endif
+
+  if (success) {
+    Serial.printf("[PING OK] Heartbeat acknowledged by server (HTTP %d)\n", code);
     int idxSeq = payload.indexOf("\"lastSyncedSeq\":");
     if (idxSeq > 0) {
       uint32_t sSeq = (uint32_t)payload.substring(idxSeq + 16).toInt();
@@ -536,12 +786,19 @@ void sendHeartbeat() {
     if (idxTime > 0) {
       time_t sTime = (time_t)payload.substring(idxTime + 13).toInt();
       if (sTime > 1700000000) {
+        // 1. Update ESP32 internal POSIX system time
         struct timeval tv = { sTime, 0 };
         settimeofday(&tv, NULL);
+
+        // 2. Discipline & synchronize the DS3231 Hardware Real-Time Clock
+        if (ds3231Connected) {
+          ds3231_setEpoch((uint32_t)sTime);
+        }
       }
     }
+  } else {
+    Serial.printf("[PING FAILED] Domain and local servers unreachable (last HTTP code: %d)\n", code);
   }
-  http.end();
 }
 
 void core0NetworkTask(void* pvParameters) {
@@ -577,39 +834,56 @@ void core0NetworkTask(void* pvParameters) {
   }
 }
 
-// 8. SETUP & MAIN LOOP
+// 9. SETUP & MAIN LOOP
 
 void setup() {
   Serial.begin(115200);
   delay(500);
 
   // Initialize Hardware Watchdog Timer (Panic on timeout)
-  // Initialize Hardware Watchdog Timer (ESP32 Core 3.x update)
   esp_task_wdt_config_t wdt_config;
-  wdt_config.timeout_ms = WDT_TIMEOUT * 1000; // Convert seconds to milliseconds
-  wdt_config.idle_core_mask = (1 << portNUM_PROCESSORS) - 1; // Monitor all cores
-  wdt_config.trigger_panic = true; // Restart ESP32 if frozen
-  
+  wdt_config.timeout_ms = WDT_TIMEOUT * 1000;
+  wdt_config.idle_core_mask = (1 << portNUM_PROCESSORS) - 1;
+  wdt_config.trigger_panic = true;
   esp_task_wdt_init(&wdt_config);
-  
-  esp_task_wdt_add(NULL); // Subscribe main setup/loop task
+  esp_task_wdt_add(NULL);
 
-  // Create NVS mutex for thread-safe Preferences access across cores
+  // Create Dual-Core Mutexes
   nvsMutex = xSemaphoreCreateMutex();
+  i2cMutex = xSemaphoreCreateMutex();
 
   pinMode(PIN_LED_GREEN, OUTPUT);
   pinMode(PIN_LED_RED,   OUTPUT);
   pinMode(PIN_BUZZER,    OUTPUT);
   digitalWrite(PIN_BUZZER, LOW);
 
+  // Initialize I2C Bus for MCP23017 and DS3231 RTC
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
+
+  // Initialize DS3231 Real-Time Clock
+  ds3231_init();
+  if (ds3231Connected) {
+    uint32_t rtcEpoch = ds3231_getEpoch();
+    if (rtcEpoch > 1700000000) {
+      struct timeval tv = { (time_t)rtcEpoch, 0 };
+      settimeofday(&tv, NULL);
+      Serial.printf("[RTC BOOT] System clock initialized from DS3231 RTC offline! Current Epoch: %u\n", rtcEpoch);
+    } else {
+      Serial.println("[RTC BOOT WARNING] DS3231 time uninitialized. Will calibrate automatically upon server connection.");
+    }
+  }
+
+  // Initialize MCP23017 Relay Controller
   if (mcp.begin_I2C(MCP_ADDR, &Wire)) {
     mcpConnected = true;
     for (uint8_t i = 0; i < NUM_LOCKERS; i++) {
       mcp.pinMode(i, OUTPUT);
       mcp.digitalWrite(i, HIGH);
     }
-  } 
+    Serial.println("[MCP23017] 12-relay IO expander initialized successfully.");
+  } else {
+    Serial.println("[MCP23017 ERROR] Failed to find MCP23017 at address 0x20!");
+  }
 
   SPI.begin(18, 19, 23, PIN_RFID_SS);
   rfid.PCD_Init();

@@ -2,13 +2,14 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { timingSafeEqualString } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 async function handleHeartbeat(request: NextRequest) {
   try {
-    const incomingApiKey = request.headers.get("x-api-key");
-    const serverApiKey = process.env.ESP_API_KEY;
+    const incomingApiKey = request.headers.get("x-api-key") || "";
+    const serverApiKey = process.env.ESP_API_KEY || "";
 
     if (!serverApiKey || serverApiKey.trim() === "") {
       return NextResponse.json(
@@ -21,7 +22,7 @@ async function handleHeartbeat(request: NextRequest) {
       );
     }
 
-    if (!incomingApiKey || incomingApiKey !== serverApiKey) {
+    if (!incomingApiKey || !timingSafeEqualString(incomingApiKey, serverApiKey)) {
       return NextResponse.json(
         {
           system: "XERO_KEY_SECURITY_MATRIX",

@@ -17,10 +17,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. For all other /admin routes, require a valid JWT cookie
+  // 2. For all other /admin routes, require a valid 24h JWT token
   if (!verifiedAdmin) {
     const loginUrl = new URL("/admin/login", request.url);
-    return NextResponse.redirect(loginUrl);
+    const response = NextResponse.redirect(loginUrl);
+    if (token) {
+      response.cookies.delete(ADMIN_COOKIE_NAME);
+    }
+    return response;
   }
 
   return NextResponse.next();

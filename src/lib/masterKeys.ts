@@ -69,7 +69,7 @@ export function checkMasterKey(rawUid: string): MasterKeyInfo {
       isMaster: true,
       isGrandMaster: true,
       lockerNumber: null,
-      forcedByLabel: "MASTER_ALL",
+      forcedByLabel: "FIRE KEY",
       keyDescription: "GRAND MASTER KEY (ALL 12 BAYS)",
     };
   }
@@ -82,7 +82,7 @@ export function checkMasterKey(rawUid: string): MasterKeyInfo {
         isMaster: true,
         isGrandMaster: false,
         lockerNumber: lockerNum,
-        forcedByLabel: "MASTER_KEY",
+        forcedByLabel: "ADMIN KEY",
         keyDescription: `INDIVIDUAL MASTER KEY (BAY L-${String(lockerNum).padStart(2, "0")})`,
       };
     }

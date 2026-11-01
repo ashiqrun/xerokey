@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import prisma from "@/lib/prisma";
 import { checkMasterKey, GRAND_MASTER_UID } from "@/lib/masterKeys";
+import { timingSafeEqualString } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -35,10 +36,10 @@ function parseEventDate(timestamp?: number | string): Date {
  */
 export async function GET(request: NextRequest) {
   try {
-    const incomingApiKey = request.headers.get("x-api-key");
-    const serverApiKey = process.env.ESP_API_KEY;
+    const incomingApiKey = request.headers.get("x-api-key") || "";
+    const serverApiKey = process.env.ESP_API_KEY || "";
 
-    if (!serverApiKey || incomingApiKey !== serverApiKey) {
+    if (!serverApiKey || serverApiKey.trim() === "" || !incomingApiKey || !timingSafeEqualString(incomingApiKey, serverApiKey)) {
       return NextResponse.json(
         { status: "error", message: "401 Unauthorized" },
         { status: 401 }
@@ -372,9 +373,9 @@ async function processSingleEvent(
  */
 export async function POST(request: NextRequest) {
   try {
-    // 1. Strict API Key Verification
-    const incomingApiKey = request.headers.get("x-api-key");
-    const serverApiKey = process.env.ESP_API_KEY;
+    // 1. Strict API Key Verification with Constant-Time Protection
+    const incomingApiKey = request.headers.get("x-api-key") || "";
+    const serverApiKey = process.env.ESP_API_KEY || "";
 
     if (!serverApiKey || serverApiKey.trim() === "") {
       return NextResponse.json(
@@ -387,7 +388,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!incomingApiKey || incomingApiKey !== serverApiKey) {
+    if (!incomingApiKey || !timingSafeEqualString(incomingApiKey, serverApiKey)) {
       return NextResponse.json(
         {
           system: "XERO_KEY_SECURITY_MATRIX",
@@ -416,7 +417,7 @@ export async function POST(request: NextRequest) {
       create: { key: "GLOBAL", lastHeartbeat: now, lastSyncedSeq: 0 },
     });
 
-    let currentSyncedSeq = systemStatus.lastSyncedSeq ?? 0;
+    const currentSyncedSeq = systemStatus.lastSyncedSeq ?? 0;
     let maxProcessedSeq = currentSyncedSeq;
 
     // ========================================================================

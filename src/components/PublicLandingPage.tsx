@@ -134,7 +134,7 @@ export function PublicLandingPage({
           <div className="hidden md:flex items-center text-center">
             <span className="text-sm sm:text-base font-mono font-bold tracking-[0.45em] text-white pl-[0.45em]"></span>
             <span className="text-xs font-mono uppercase tracking-[0.3em] text-zinc-500">
-              AUTONOMOUS NFC LOCKER SYSTEM
+              AUTONOMOUS LOCKER SYSTEM
             </span>
           </div>
 
@@ -172,7 +172,7 @@ export function PublicLandingPage({
             <div className="relative group border border-zinc-800/90 bg-zinc-950/80 backdrop-blur-sm p-5 sm:p-6 overflow-hidden transition-all hover:border-zinc-700 flex flex-col justify-center items-center text-center">
               <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent" />
               <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-500">
-                <span>DAILY USERS <span className="text-emerald-400">24H</span></span>
+                <span>TODAYS TOTAL USER</span>
                 
               </div>
               <div className="mt-4 flex items-baseline justify-center sm:justify-start gap-3">
@@ -208,7 +208,7 @@ export function PublicLandingPage({
                 } to-transparent`}
               />
               <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.2em] text-zinc-500">
-                <span>CURRENT CAPACITY</span>
+                <span>CURRENTLY AVAILABLE LOCKERS</span>
                 
               </div>
               <div className="mt-3 sm:mt-4 flex flex-col sm:flex-row items-center sm:items-baseline justify-center gap-2 sm:gap-3">
@@ -221,9 +221,7 @@ export function PublicLandingPage({
                 >
                   {String(stats.availableLockers).padStart(2, "0")}
                 </span>
-                <span className="text-xs font-mono text-zinc-500">
-                  / {String(stats.totalLockers).padStart(2, "0")} AVAILABLE
-                </span>
+                
               </div>
             </div>
           </div>
@@ -256,7 +254,7 @@ export function PublicLandingPage({
           {/* Perspective Stage */}
           <div className="relative border border-zinc-800/80 bg-gradient-to-b from-zinc-950/90 via-black to-zinc-950/90 p-3 sm:p-8 md:p-12 overflow-hidden">
             <div className="flex items-center justify-between text-[10px] font-mono text-zinc-600 mb-4 sm:mb-8">
-              <span>XEROKEY // REALTIME FEED</span>
+              <span>XEROKEY // REALTIME</span>
               <span
                 className={
                   isHardwareOnline ? "text-emerald-400" : "text-rose-500"
@@ -567,7 +565,7 @@ export function PublicLandingPage({
                 isHardwareOnline ? "text-emerald-400" : "text-rose-500"
               }
             >
-              {isHardwareOnline ? "SYSTEM ONLINE" : "SYSTEM OFFLINE"}
+              {isHardwareOnline ? "SYSTEM IS ONLINE" : "SYSTEM IS OFFLINE"}
             </p>
           </div>
         </div>

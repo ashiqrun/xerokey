@@ -1,15 +1,14 @@
 // File: src/app/admin/page.tsx
 
 import prisma from "@/lib/prisma";
-import { cookies } from "next/headers";
-import { ADMIN_COOKIE_NAME, verifyAdminToken } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { verifyActiveAdminSession } from "@/lib/session";
 import { ensureDefaultAdminExists } from "@/app/actions";
 import AdminDashboard, {
   type LockerItem,
   type SessionLogItem,
   type AdminUserItem,
   type DashboardStats,
-  type MasterKeyItem,
 } from "@/components/AdminDashboard";
 import { getAllMasterKeysRegistry } from "@/lib/masterKeys";
 
@@ -43,16 +42,15 @@ async function ensureTwelveLockersExist() {
 }
 
 export default async function AdminPage() {
+  // 1. Strict Active Session Verification: Checks database to ensure this admin has not been deleted
+  const session = await verifyActiveAdminSession();
+  if (!session) {
+    redirect("/admin/login");
+  }
+
   await Promise.all([ensureTwelveLockersExist(), ensureDefaultAdminExists()]);
 
-  const cookieStore = cookies();
-  const token = cookieStore.get(ADMIN_COOKIE_NAME)?.value;
-  const verified = await verifyAdminToken(token);
-
-  const currentAdminUsername: string =
-    typeof verified?.username === "string" && verified.username.trim() !== ""
-      ? verified.username.trim()
-      : "UNKNOWN ADMIN";
+  const currentAdminUsername: string = session.username.toUpperCase();
 
   const [totalUsers, rawLockers, rawSessions, rawAdmins, systemStatus] =
     await Promise.all([

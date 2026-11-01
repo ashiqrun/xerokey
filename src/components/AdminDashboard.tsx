@@ -10,6 +10,7 @@ import {
   deleteAdminAction,
   changeAdminPasswordAction,
 } from "@/app/actions";
+import PasswordInput from "@/components/PasswordInput";
 
 export interface DashboardStats {
   totalUsers: number;
@@ -903,7 +904,7 @@ export default function AdminDashboard({
                   <table className="min-w-[680px] w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-zinc-800 bg-zinc-950 text-[11px] font-mono uppercase tracking-wider text-zinc-400">
-                        <th className="py-3 px-3.5 sm:py-3.5 sm:px-4">NFC UID</th>
+                        <th className="py-3 px-3.5 sm:py-3.5 sm:px-4">STUDENT UID</th>
                         <th className="py-3 px-3.5 sm:py-3.5 sm:px-4">LOCKER NO</th>
                         <th className="py-3 px-3.5 sm:py-3.5 sm:px-4">CHECK-IN TIME</th>
                         <th className="py-3 px-3.5 sm:py-3.5 sm:px-4">CHECK-OUT TIME</th>
@@ -918,7 +919,7 @@ export default function AdminDashboard({
                             colSpan={6}
                             className="py-12 text-center text-zinc-500 uppercase tracking-widest"
                           >
-                            NO XEROKEY LOGS MATCH ACTIVE PARAMETERS
+                            NO XEROKEY LOGS MATCH UID
                           </td>
                         </tr>
                       ) : (
@@ -972,7 +973,7 @@ export default function AdminDashboard({
                                         : "border-emerald-500/40 bg-emerald-950/30 text-emerald-300 hover:border-emerald-400"
                                     }`}
                                   >
-                                    OVERRIDE: {session.forcedByAdmin.toUpperCase()}
+                                    OPENED BY ADMIN
                                   </button>
                                 ) : (
                                   <span className="text-zinc-600">—</span>
@@ -1324,7 +1325,7 @@ export default function AdminDashboard({
                             )}
                           </div>
                           <p className="mt-1.5 text-[11px] font-mono text-zinc-500">
-                            PROVISIONED: {formatTimestamp(admin.createdAt)} //
+                            PROVISIONED: {formatTimestamp(admin.createdAt)}{" // "}
                             OVERRIDES:{" "}
                             <strong className="text-zinc-300">
                               {overrideCount}
@@ -1376,14 +1377,14 @@ export default function AdminDashboard({
 
                       {isChangingPass && (
                         <div className="pt-3 border-t border-zinc-800/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-                          <input
-                            type="password"
+                          <PasswordInput
                             value={updatedPasswordInput}
                             onChange={(e) =>
                               setUpdatedPasswordInput(e.target.value)
                             }
                             placeholder="NEW SECURITY PASSKEY (MIN 6 CHARS)..."
-                            className="flex-1 bg-black border border-zinc-700 px-3 py-2 text-xs font-mono text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
+                            wrapperClassName="flex-1"
+                            className="w-full bg-black border border-zinc-700 px-3 py-2 text-xs font-mono text-white placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
                           />
                           <button
                             type="button"
@@ -1435,8 +1436,7 @@ export default function AdminDashboard({
                     <label className="block text-[10px] font-mono uppercase tracking-widest text-zinc-400 mb-1.5 sm:mb-2">
                       SECURITY PASSKEY (MIN 6 CHARS)
                     </label>
-                    <input
-                      type="password"
+                    <PasswordInput
                       required
                       value={newAdminPassword}
                       onChange={(e) => setNewAdminPassword(e.target.value)}

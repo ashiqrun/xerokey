@@ -43,6 +43,7 @@ model AdminUser {
   username     String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+  tokenVersion Int      @default(1)
 }
 
 // 5. Real-Time ESP32 Hardware Heartbeat Status (Single-Row Model)
