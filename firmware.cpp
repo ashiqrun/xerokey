@@ -47,6 +47,12 @@ const WifiCred WIFI_NETWORKS[] = {
 #define PIN_LED_RED      27  // D27
 #define PIN_BUZZER       13  // D13 (Safe boot GPIO)
 
+#ifndef LED_BUILTIN
+  #define PIN_LED_BUILTIN 2   // Onboard LED on most ESP32 Dev Kits (GPIO 2)
+#else
+  #define PIN_LED_BUILTIN LED_BUILTIN
+#endif
+
 #define NUM_LOCKERS      12
 #define RELAY_PULSE_MS   1500UL
 #define PING_INTERVAL    15000UL
@@ -477,6 +483,27 @@ void core1HardwareTask(void* pvParameters) {
       if (buzzEdgesLeft == 0) syncStatusLeds();
     }
 
+    // Built-in LED Wi-Fi Status: Solid ON when connected, Blink (250ms interval) while connecting/disconnected
+    static uint32_t lastWifiLedBlink = 0;
+    static bool wifiLedState = false;
+    static bool prevConnected = false;
+    bool isWifiConnected = (WiFi.status() == WL_CONNECTED);
+
+    if (isWifiConnected) {
+      if (!prevConnected) {
+        prevConnected = true;
+        wifiLedState = true;
+        digitalWrite(PIN_LED_BUILTIN, HIGH);
+      }
+    } else {
+      prevConnected = false;
+      if (now - lastWifiLedBlink >= 250) {
+        lastWifiLedBlink = now;
+        wifiLedState = !wifiLedState;
+        digitalWrite(PIN_LED_BUILTIN, wifiLedState ? HIGH : LOW);
+      }
+    }
+
     // RC522 Health Check — re-init if SPI communication lost (every 30s)
     if (now - lastRfidCheck >= 30000) {
       lastRfidCheck = now;
@@ -852,9 +879,11 @@ void setup() {
   nvsMutex = xSemaphoreCreateMutex();
   i2cMutex = xSemaphoreCreateMutex();
 
-  pinMode(PIN_LED_GREEN, OUTPUT);
-  pinMode(PIN_LED_RED,   OUTPUT);
-  pinMode(PIN_BUZZER,    OUTPUT);
+  pinMode(PIN_LED_BUILTIN, OUTPUT);
+  digitalWrite(PIN_LED_BUILTIN, LOW);
+  pinMode(PIN_LED_GREEN,   OUTPUT);
+  pinMode(PIN_LED_RED,     OUTPUT);
+  pinMode(PIN_BUZZER,      OUTPUT);
   digitalWrite(PIN_BUZZER, LOW);
 
   // Initialize I2C Bus for MCP23017 and DS3231 RTC
