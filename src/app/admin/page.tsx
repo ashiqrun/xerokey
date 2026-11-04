@@ -41,6 +41,17 @@ async function ensureTwelveLockersExist() {
   }
 }
 
+let isAdminBootstrapDone = false;
+async function ensureAdminBootstrapOnce() {
+  if (isAdminBootstrapDone) return;
+  try {
+    await Promise.all([ensureTwelveLockersExist(), ensureDefaultAdminExists()]);
+    isAdminBootstrapDone = true;
+  } catch (err) {
+    console.error("Admin bootstrap error:", err);
+  }
+}
+
 export default async function AdminPage() {
   // 1. Strict Active Session Verification: Checks database to ensure this admin has not been deleted
   const session = await verifyActiveAdminSession();
@@ -48,7 +59,7 @@ export default async function AdminPage() {
     redirect("/admin/login");
   }
 
-  await Promise.all([ensureTwelveLockersExist(), ensureDefaultAdminExists()]);
+  await ensureAdminBootstrapOnce();
 
   const currentAdminUsername: string = session.username.toUpperCase();
 

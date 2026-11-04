@@ -124,13 +124,21 @@ export default function AdminDashboard({
     message: string;
   } | null>(null);
 
-  // Auto-poll every 3 seconds
+  // Lightweight auto-polling: only refresh when tab is active and not submitting forms
   useEffect(() => {
     const interval = setInterval(() => {
-      router.refresh();
-    }, 3000);
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "visible" &&
+        !isPurging &&
+        !isRegisteringAdmin &&
+        !isUpdatingPassword
+      ) {
+        router.refresh();
+      }
+    }, 4000);
     return () => clearInterval(interval);
-  }, [router]);
+  }, [router, isPurging, isRegisteringAdmin, isUpdatingPassword]);
 
   // Reset pagination to page 1 whenever filters change
   useEffect(() => {

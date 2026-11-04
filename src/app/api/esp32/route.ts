@@ -31,18 +31,28 @@ function parseEventDate(timestamp?: number | string): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
+const NO_CACHE_HEADERS = {
+  "Cache-Control": "no-store, no-cache, must-revalidate",
+  "Content-Type": "application/json",
+};
+
 /**
- * GET: Allows ESP32 to query sync status and server time without triggering transactions.
+ * GET: Allows ESP32 to query sync status and server time with minimal latency.
  */
 export async function GET(request: NextRequest) {
   try {
     const incomingApiKey = request.headers.get("x-api-key") || "";
     const serverApiKey = process.env.ESP_API_KEY || "";
 
-    if (!serverApiKey || serverApiKey.trim() === "" || !incomingApiKey || !timingSafeEqualString(incomingApiKey, serverApiKey)) {
+    if (
+      !serverApiKey ||
+      serverApiKey.trim() === "" ||
+      !incomingApiKey ||
+      !timingSafeEqualString(incomingApiKey, serverApiKey)
+    ) {
       return NextResponse.json(
         { status: "error", message: "401 Unauthorized" },
-        { status: 401 }
+        { status: 401, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -51,22 +61,30 @@ export async function GET(request: NextRequest) {
       where: { key: "GLOBAL" },
       update: { lastHeartbeat: now },
       create: { key: "GLOBAL", lastHeartbeat: now, lastSyncedSeq: 0 },
+      select: { lastSyncedSeq: true },
     });
 
-    return NextResponse.json({
-      system: "XERO_KEY_SECURITY_MATRIX",
-      status: "online",
-      lastSyncedSeq: systemStatus.lastSyncedSeq ?? 0,
-      serverTime: Math.floor(now.getTime() / 1000),
-    });
+    return NextResponse.json(
+      {
+        system: "XERO_KEY_SECURITY_MATRIX",
+        status: "online",
+        lastSyncedSeq: systemStatus.lastSyncedSeq ?? 0,
+        serverTime: Math.floor(now.getTime() / 1000),
+      },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (error) {
     console.error("ESP32 GET Status Error:", error);
-    return NextResponse.json({ status: "error" }, { status: 500 });
+    return NextResponse.json(
+      { status: "error" },
+      { status: 500, headers: NO_CACHE_HEADERS }
+    );
   }
 }
 
 /**
- * Processes a single event with strict idempotency and Master Key detection.
+ * Processes a single event with strict idempotency, Master Key detection,
+ * and parallelized database mutations to minimize ESP32 roundtrip wait times.
  */
 async function processSingleEvent(
   event: HardwareEventPayload,
@@ -100,61 +118,67 @@ async function processSingleEvent(
   // CASE A: GRAND MASTER KEY (Opens all 12 lockers sequentially)
   // ==========================================================================
   if (masterInfo.isGrandMaster || event.action === "master_all") {
-    // 1. Check out all currently occupied lockers
     const activeSessions = await prisma.session.findMany({
       where: { checkOutTime: null },
     });
 
-    for (const session of activeSessions) {
+    const sessionUpdates = activeSessions.map((session) => {
       const diffMs = eventDate.getTime() - session.checkInTime.getTime();
       const duration = Math.max(1, Math.round(diffMs / 60000));
 
-      await prisma.session.update({
-        where: { id: session.id },
-        data: {
-          checkOutTime: eventDate,
-          duration,
-          forcedByAdmin: "MASTER_ALL",
-          seq: eventSeq,
-        },
-      });
-
-      await prisma.user.upsert({
-        where: { uid: session.uid },
-        update: { totalUsageTime: { increment: duration } },
-        create: {
-          uid: session.uid,
-          totalSessions: 1,
-          totalUsageTime: duration,
-        },
-      });
-    }
-
-    // 2. For each bay 1-12, create an override session record if no active session existed
-    const occupiedBays = new Set(activeSessions.map((s) => s.lockerNumber));
-    for (let bay = 1; bay <= 12; bay++) {
-      if (!occupiedBays.has(bay)) {
-        await prisma.session.create({
+      return Promise.all([
+        prisma.session.update({
+          where: { id: session.id },
           data: {
-            uid: uid || GRAND_MASTER_UID,
-            lockerNumber: bay,
-            checkInTime: eventDate,
             checkOutTime: eventDate,
-            duration: 0,
+            duration,
             forcedByAdmin: "MASTER_ALL",
             seq: eventSeq,
           },
-        });
+        }),
+        prisma.user.upsert({
+          where: { uid: session.uid },
+          update: { totalUsageTime: { increment: duration } },
+          create: {
+            uid: session.uid,
+            totalSessions: 1,
+            totalUsageTime: duration,
+          },
+        }),
+      ]);
+    });
+
+    const occupiedBays = new Set(activeSessions.map((s) => s.lockerNumber));
+    const overrideCreates = [];
+    for (let bay = 1; bay <= 12; bay++) {
+      if (!occupiedBays.has(bay)) {
+        overrideCreates.push(
+          prisma.session.create({
+            data: {
+              uid: uid || GRAND_MASTER_UID,
+              lockerNumber: bay,
+              checkInTime: eventDate,
+              checkOutTime: eventDate,
+              duration: 0,
+              forcedByAdmin: "MASTER_ALL",
+              seq: eventSeq,
+            },
+          })
+        );
       }
     }
 
-    // 3. Mark all physical lockers as available
-    await prisma.locker.updateMany({
-      data: {
-        isOccupied: false,
-        currentUid: null,
-      },
-    });
+    // Parallelize all updates, overrides, and clearing locker states
+    await Promise.all([
+      ...sessionUpdates,
+      ...overrideCreates,
+      prisma.locker.updateMany({
+        data: {
+          isOccupied: false,
+          currentUid: null,
+        },
+      }),
+    ]);
 
     return {
       processed: true,
@@ -182,48 +206,55 @@ async function processSingleEvent(
       const diffMs = eventDate.getTime() - activeSession.checkInTime.getTime();
       const duration = Math.max(1, Math.round(diffMs / 60000));
 
-      await prisma.session.update({
-        where: { id: activeSession.id },
-        data: {
-          checkOutTime: eventDate,
-          duration,
-          forcedByAdmin: "MASTER_KEY",
-          seq: eventSeq,
-        },
-      });
-
-      await prisma.user.upsert({
-        where: { uid: activeSession.uid },
-        update: { totalUsageTime: { increment: duration } },
-        create: {
-          uid: activeSession.uid,
-          totalSessions: 1,
-          totalUsageTime: duration,
-        },
-      });
+      await Promise.all([
+        prisma.session.update({
+          where: { id: activeSession.id },
+          data: {
+            checkOutTime: eventDate,
+            duration,
+            forcedByAdmin: "MASTER_KEY",
+            seq: eventSeq,
+          },
+        }),
+        prisma.user.upsert({
+          where: { uid: activeSession.uid },
+          update: { totalUsageTime: { increment: duration } },
+          create: {
+            uid: activeSession.uid,
+            totalSessions: 1,
+            totalUsageTime: duration,
+          },
+        }),
+        prisma.locker.updateMany({
+          where: { lockerNumber: bayNum },
+          data: {
+            isOccupied: false,
+            currentUid: null,
+          },
+        }),
+      ]);
     } else {
-      // Empty locker opened by individual master: record override log
-      await prisma.session.create({
-        data: {
-          uid,
-          lockerNumber: bayNum,
-          checkInTime: eventDate,
-          checkOutTime: eventDate,
-          duration: 0,
-          forcedByAdmin: "MASTER_KEY",
-          seq: eventSeq,
-        },
-      });
+      await Promise.all([
+        prisma.session.create({
+          data: {
+            uid,
+            lockerNumber: bayNum,
+            checkInTime: eventDate,
+            checkOutTime: eventDate,
+            duration: 0,
+            forcedByAdmin: "MASTER_KEY",
+            seq: eventSeq,
+          },
+        }),
+        prisma.locker.updateMany({
+          where: { lockerNumber: bayNum },
+          data: {
+            isOccupied: false,
+            currentUid: null,
+          },
+        }),
+      ]);
     }
-
-    // Release target locker
-    await prisma.locker.updateMany({
-      where: { lockerNumber: bayNum },
-      data: {
-        isOccupied: false,
-        currentUid: null,
-      },
-    });
 
     return {
       processed: true,
@@ -241,6 +272,7 @@ async function processSingleEvent(
     prisma.session.findFirst({
       where: { uid, checkOutTime: null },
       orderBy: { checkInTime: "desc" },
+      select: { id: true, lockerNumber: true, checkInTime: true },
     }),
     prisma.locker.findFirst({
       where: {
@@ -249,6 +281,7 @@ async function processSingleEvent(
           ...(targetLockerNum ? [{ lockerNumber: targetLockerNum, isOccupied: true }] : []),
         ],
       },
+      select: { lockerNumber: true },
     }),
   ]);
 
@@ -262,39 +295,48 @@ async function processSingleEvent(
       targetLockerNum ?? occupiedLocker?.lockerNumber ?? activeSession?.lockerNumber ?? 1;
 
     let durationInMinutes = 1;
+    const writePromises: Promise<unknown>[] = [
+      prisma.locker.updateMany({
+        where: {
+          OR: [{ currentUid: uid }, { lockerNumber: bayNum }],
+        },
+        data: {
+          isOccupied: false,
+          currentUid: null,
+        },
+      }),
+    ];
+
     if (activeSession) {
       const diffMs = eventDate.getTime() - activeSession.checkInTime.getTime();
       durationInMinutes = Math.max(1, Math.round(diffMs / 60000));
 
-      await prisma.session.update({
-        where: { id: activeSession.id },
-        data: {
-          checkOutTime: eventDate,
-          duration: durationInMinutes,
-          seq: eventSeq,
-        },
-      });
+      writePromises.push(
+        prisma.session.update({
+          where: { id: activeSession.id },
+          data: {
+            checkOutTime: eventDate,
+            duration: durationInMinutes,
+            seq: eventSeq,
+          },
+        })
+      );
     }
 
-    await prisma.locker.updateMany({
-      where: {
-        OR: [{ currentUid: uid }, { lockerNumber: bayNum }],
-      },
-      data: {
-        isOccupied: false,
-        currentUid: null,
-      },
-    });
+    writePromises.push(
+      prisma.user.upsert({
+        where: { uid },
+        update: { totalUsageTime: { increment: durationInMinutes } },
+        create: {
+          uid,
+          totalSessions: 1,
+          totalUsageTime: durationInMinutes,
+        },
+      })
+    );
 
-    await prisma.user.upsert({
-      where: { uid },
-      update: { totalUsageTime: { increment: durationInMinutes } },
-      create: {
-        uid,
-        totalSessions: 1,
-        totalUsageTime: durationInMinutes,
-      },
-    });
+    // Parallel execution cuts DB roundtrips from 3 to 1
+    await Promise.all(writePromises);
 
     return {
       processed: true,
@@ -310,6 +352,7 @@ async function processSingleEvent(
   if (targetLockerNum) {
     targetLocker = await prisma.locker.findUnique({
       where: { lockerNumber: targetLockerNum },
+      select: { id: true, lockerNumber: true, isOccupied: true },
     });
   }
 
@@ -317,6 +360,7 @@ async function processSingleEvent(
     targetLocker = await prisma.locker.findFirst({
       where: { isOccupied: false },
       orderBy: { lockerNumber: "asc" },
+      select: { id: true, lockerNumber: true },
     });
   }
 
@@ -330,34 +374,35 @@ async function processSingleEvent(
     };
   }
 
-  await prisma.locker.update({
-    where: { id: targetLocker.id },
-    data: {
-      isOccupied: true,
-      currentUid: uid,
-    },
-  });
-
-  await prisma.session.create({
-    data: {
-      uid,
-      lockerNumber: targetLocker.lockerNumber,
-      checkInTime: eventDate,
-      checkOutTime: null,
-      duration: null,
-      seq: eventSeq,
-    },
-  });
-
-  await prisma.user.upsert({
-    where: { uid },
-    update: { totalSessions: { increment: 1 } },
-    create: {
-      uid,
-      totalSessions: 1,
-      totalUsageTime: 0,
-    },
-  });
+  // Parallelize locker reservation, session record, and user stat increment
+  await Promise.all([
+    prisma.locker.update({
+      where: { id: targetLocker.id },
+      data: {
+        isOccupied: true,
+        currentUid: uid,
+      },
+    }),
+    prisma.session.create({
+      data: {
+        uid,
+        lockerNumber: targetLocker.lockerNumber,
+        checkInTime: eventDate,
+        checkOutTime: null,
+        duration: null,
+        seq: eventSeq,
+      },
+    }),
+    prisma.user.upsert({
+      where: { uid },
+      update: { totalSessions: { increment: 1 } },
+      create: {
+        uid,
+        totalSessions: 1,
+        totalUsageTime: 0,
+      },
+    }),
+  ]);
 
   return {
     processed: true,
@@ -384,7 +429,7 @@ export async function POST(request: NextRequest) {
           status: "error",
           message: "Server security configuration error: Missing API Key setup.",
         },
-        { status: 500 }
+        { status: 500, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -395,7 +440,7 @@ export async function POST(request: NextRequest) {
           status: "error",
           message: "401 Unauthorized: Invalid or missing x-api-key header.",
         },
-        { status: 401 }
+        { status: 401, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -404,7 +449,7 @@ export async function POST(request: NextRequest) {
     if (!body) {
       return NextResponse.json(
         { status: "error", message: "Malformed JSON payload." },
-        { status: 400 }
+        { status: 400, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -415,6 +460,7 @@ export async function POST(request: NextRequest) {
       where: { key: "GLOBAL" },
       update: { lastHeartbeat: now },
       create: { key: "GLOBAL", lastHeartbeat: now, lastSyncedSeq: 0 },
+      select: { lastSyncedSeq: true },
     });
 
     const currentSyncedSeq = systemStatus.lastSyncedSeq ?? 0;
@@ -425,7 +471,6 @@ export async function POST(request: NextRequest) {
     // ========================================================================
     if (Array.isArray(body.events)) {
       const rawEvents: HardwareEventPayload[] = body.events;
-      // Sort by sequence number ascending to preserve causal ordering
       const sortedEvents = rawEvents.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
 
       let processedCount = 0;
@@ -444,7 +489,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Update highest verified sequence in MongoDB
       if (maxProcessedSeq > currentSyncedSeq) {
         await prisma.systemStatus.update({
           where: { key: "GLOBAL" },
@@ -455,14 +499,17 @@ export async function POST(request: NextRequest) {
       revalidatePath("/");
       revalidatePath("/admin");
 
-      return NextResponse.json({
-        system: "XERO_KEY_SECURITY_MATRIX",
-        status: "success",
-        syncType: "batch",
-        processedCount,
-        skippedCount,
-        lastSyncedSeq: maxProcessedSeq,
-      });
+      return NextResponse.json(
+        {
+          system: "XERO_KEY_SECURITY_MATRIX",
+          status: "success",
+          syncType: "batch",
+          processedCount,
+          skippedCount,
+          lastSyncedSeq: maxProcessedSeq,
+        },
+        { headers: NO_CACHE_HEADERS }
+      );
     }
 
     // ========================================================================
@@ -475,7 +522,7 @@ export async function POST(request: NextRequest) {
           status: "error",
           message: "Invalid or missing NFC 'uid' in request payload.",
         },
-        { status: 400 }
+        { status: 400, headers: NO_CACHE_HEADERS }
       );
     }
 
@@ -497,14 +544,17 @@ export async function POST(request: NextRequest) {
     revalidatePath("/");
     revalidatePath("/admin");
 
-    return NextResponse.json({
-      system: "XERO_KEY_SECURITY_MATRIX",
-      status: "success",
-      action: result.action,
-      lockerNumber: result.lockerNumber,
-      lastSyncedSeq: maxProcessedSeq,
-      skipped: result.skipped,
-    });
+    return NextResponse.json(
+      {
+        system: "XERO_KEY_SECURITY_MATRIX",
+        status: "success",
+        action: result.action,
+        lockerNumber: result.lockerNumber,
+        lastSyncedSeq: maxProcessedSeq,
+        skipped: result.skipped,
+      },
+      { headers: NO_CACHE_HEADERS }
+    );
   } catch (error) {
     console.error("Xero Key ESP32 Route Error:", error);
     return NextResponse.json(
@@ -513,7 +563,7 @@ export async function POST(request: NextRequest) {
         status: "error",
         message: "Internal server error processing Xero Key telemetry.",
       },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }
