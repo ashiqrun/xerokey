@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+// @ts-expect-error CSS imports are handled by Next.js, not TypeScript.
 import "./globals.css";
 
 const geistSans = localFont({
@@ -27,11 +28,11 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Xerokey | Autonomous Smart NFC Locker System",
+    default: "Xerokey",
     template: "%s | Xerokey",
   },
   description:
-    "Xerokey is the ultimate autonomous smart NFC locker system for universities, libraries, and enterprises. Instant university ID tap check-in, real-time IoT telemetry, 7-byte UID verification, and offline-first edge architecture.",
+    "Xerokey is the autonomous smart NFC locker system for universities, libraries, and enterprises. Instant university ID tap check-in, real time IoT telemetry, ID verification, and offline-first architecture.",
   keywords: [
     "xerokey",
     "xero key",
@@ -52,9 +53,13 @@ export const metadata: Metadata = {
     "iot locker system",
     "ashiqrun xerokey",
     "ashiqrun",
+    "diu locker",
+    "library locker",
+    "diu library locker",
+    "digital locker",
   ],
   authors: [{ name: "Ashiqrun", url: "https://ashiq.run" }],
-  creator: "Ashiqrun (xerorun.com)",
+  creator: "Ashiqrun",
   publisher: "Xerokey",
   applicationName: "Xerokey",
   alternates: {
